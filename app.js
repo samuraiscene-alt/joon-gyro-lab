@@ -1,0 +1,40 @@
+'use strict';
+const $=id=>document.getElementById(id),canvas=$('scene'),ctx=canvas.getContext('2d');
+const config={steerSensitivity:1,throttleSensitivity:1,deadZone:3,invertSteer:false,invertThrottle:false};
+try{Object.assign(config,JSON.parse(localStorage.getItem('joon-gyro-settings')||'{}'))}catch{}
+for(const key of Object.keys(config)){const el=$(key);el[el.type==='checkbox'?'checked':'value']=config[key];el.addEventListener('input',()=>{config[key]=el.type==='checkbox'?el.checked:Number(el.value);updateLabels();localStorage.setItem('joon-gyro-settings',JSON.stringify(config))})}
+function updateLabels(){$('steerLabel').textContent=config.steerSensitivity.toFixed(1);$('throttleLabel').textContent=config.throttleSensitivity.toFixed(1);$('deadLabel').textContent=config.deadZone+'°'}updateLabels();
+$('settings').onclick=()=>$('config').showModal();
+const state={started:false,received:false,rawBeta:0,rawGamma:0,zeroBeta:0,zeroGamma:0,steer:0,throttle:0,lane:0,lean:0,speed:0,elapsed:0,green:false,clock:0,roadOffset:0,frame:0,orientation:90};
+const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+const wrap=v=>((v+180)%360+360)%360-180;
+const smooth=(a,b,dt,rate)=>a+(b-a)*(1-Math.exp(-dt*rate));
+function angle(){let a=screen.orientation?.angle;if(typeof a!=='number')a=typeof window.orientation==='number'?window.orientation:90;return a}
+function onOrientation(e){if(e.beta==null||e.gamma==null)return;state.rawBeta=e.beta;state.rawGamma=e.gamma;state.orientation=angle();if(!state.received){state.received=true;calibrate();$('status').textContent='센서 수신 중';$('hint').textContent='기울여서 움직임을 확인해줘';}}
+function calibrate(){if(!state.received)return;state.zeroBeta=state.rawBeta;state.zeroGamma=state.rawGamma;state.steer=state.throttle=0;$('hint').textContent='중립 보정 완료 · 좌우/앞뒤로 기울여봐'}
+function reset(){state.elapsed=0;state.green=false;state.lane=state.lean=state.speed=state.roadOffset=0;$('hint').textContent='빨간 신호 · 초록불이 켜지면 자동 출발'}
+$('calibrate').onclick=calibrate;$('reset').onclick=reset;
+$('start').onclick=async()=>{if(!window.isSecureContext){$('hint').textContent='센서 사용은 HTTPS 주소에서만 가능해';return}try{const requests=[];if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function')requests.push(DeviceMotionEvent.requestPermission());if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function')requests.push(DeviceOrientationEvent.requestPermission());const results=await Promise.all(requests);if(results.some(x=>x!=='granted'))throw Error('센서 권한이 거부되었어');window.addEventListener('deviceorientation',onOrientation);state.started=true;$('calibrate').disabled=false;$('reset').disabled=false;$('start').style.display='none';reset();$('status').textContent='센서 연결 대기';setTimeout(()=>{if(!state.received)$('hint').textContent='센서값이 없어. Safari에서 권한과 기기 방향을 확인해줘'},2500)}catch(e){$('hint').textContent='센서 시작 실패: '+e.message}};
+function inputCurve(degrees,sensitivity){const mag=Math.abs(degrees)*sensitivity;const d=config.deadZone;if(mag<=d)return 0;const t=clamp((mag-d)/(25-d),0,1);return Math.sign(degrees)*t*t*(3-2*t)}
+let W=0,H=0,dpr=1;function resize(){dpr=Math.min(2,devicePixelRatio||1);W=window.innerWidth;H=window.innerHeight;canvas.width=Math.round(W*dpr);canvas.height=Math.round(H*dpr);ctx.setTransform(dpr,0,0,dpr,0,0)}addEventListener('resize',resize);resize();
+const polygon=(p,fill)=>{ctx.beginPath();ctx.moveTo(...p[0]);for(const v of p.slice(1))ctx.lineTo(...v);ctx.closePath();ctx.fillStyle=fill;ctx.fill()};
+function draw(){ctx.clearRect(0,0,W,H);const horizon=H*.35;let sky=ctx.createLinearGradient(0,0,0,horizon);sky.addColorStop(0,'#75a9ce');sky.addColorStop(1,'#d9dabb');ctx.fillStyle=sky;ctx.fillRect(0,0,W,horizon);ctx.fillStyle='#668b6f';ctx.fillRect(0,horizon,W,H-horizon);
+for(let i=0;i<23;i++){let x=i*W/19-W*.08;let h=18+(i*17%38);ctx.fillStyle=i%3===0?'#637c84':'#748891';ctx.fillRect(x,horizon-h,W/26,h)}
+const center=W/2-state.lane*W*.1,topL=center-W*.12,topR=center+W*.12,botL=center-W*.63,botR=center+W*.63;
+polygon([[topL,horizon],[topR,horizon],[botR,H],[botL,H]],'#414c55');
+polygon([[topL-4,horizon],[topL,horizon],[botL,H],[botL-10,H]],'#d6d6bf');polygon([[topR,horizon],[topR+4,horizon],[botR+10,H],[botR,H]],'#d6d6bf');
+for(const frac of [-1/3,1/3]){let t=(frac+1)/2;for(let i=0;i<14;i++){let z=((i/14+state.roadOffset)%1),p=z*z;let z2=Math.min(1,z+.028),p2=z2*z2;let x1=(topL+(topR-topL)*t)*(1-p)+(botL+(botR-botL)*t)*p;let x2=(topL+(topR-topL)*t)*(1-p2)+(botL+(botR-botL)*t)*p2;let y1=horizon+(H-horizon)*p,y2=horizon+(H-horizon)*p2;polygon([[x1-1-p*2,y1],[x1+1+p*2,y1],[x2+1+p2*2,y2],[x2-1-p2*2,y2]],'#e6e1c4')}}
+for(const side of [-1,1]){for(let i=0;i<12;i++){let z=((i/12+state.roadOffset)%1),p=z*z,y=horizon+(H-horizon)*p;let x=side<0?topL+(botL-topL)*p:topR+(botR-topR)*p;ctx.fillStyle=i%2?'#f5f4ef':'#e94343';ctx.fillRect(x+(side*5),y,side*(3+10*p),Math.max(2,10*p));}}
+for(let i=0;i<3;i++){let p=.13+i*.12+Math.sin(state.clock*.25+i)*.006;let lane=[-.55,.65,.03][i];let roadWidth=W*(.12+.51*p);let x=center+lane*roadWidth, y=horizon+(H-horizon)*p;ctx.save();ctx.translate(x,y);let size=9+30*p;ctx.fillStyle=['#efbe37','#cce0ee','#37b2a1'][i];ctx.fillRect(-size*.36,-size,size*.72,size*.95);ctx.fillStyle='#182432';ctx.fillRect(-size*.2,-size*1.2,size*.4,size*.55);ctx.restore()}
+const bx=W*.5+state.lane*W*.12,by=H*.78,bikeSize=Math.min(H*.28,W*.22);ctx.save();ctx.translate(bx,by);ctx.rotate(-state.lean*Math.PI/180);let s=bikeSize/100;ctx.scale(s,s);ctx.fillStyle='#0005';ctx.beginPath();ctx.ellipse(0,51,39,8,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#0b1420';ctx.fillRect(-12,20,24,46);polygon([[-27,6],[-16,-11],[16,-11],[27,6],[21,41],[-21,41]],'#d8343c');polygon([[-11,-7],[-7,-25],[7,-25],[11,-7]],'#edf2f6');ctx.fillStyle='#1b2735';ctx.beginPath();ctx.arc(0,-23,18,0,Math.PI*2);ctx.fill();ctx.fillStyle='#e3e9ee';ctx.beginPath();ctx.arc(0,-26,13,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ef5555';ctx.fillRect(-19,26,38,8);ctx.restore();
+if(!state.green){ctx.fillStyle='#17232d';ctx.fillRect(W*.5-19,horizon-71,38,60);for(let i=0;i<3;i++){ctx.beginPath();ctx.arc(W*.5,horizon-59+i*18,7,0,Math.PI*2);ctx.fillStyle=i===0?'#fb464b':'#3d4644';ctx.fill()}}else if(state.elapsed<5){ctx.fillStyle='#16372b';ctx.fillRect(W*.5-12,horizon-65,24,46);ctx.beginPath();ctx.arc(W*.5,horizon-31,8,0,Math.PI*2);ctx.fillStyle='#35ed7e';ctx.fill()}
+}
+let last=performance.now();function frame(now){const dt=Math.min(.05,(now-last)/1000);last=now;state.clock+=dt;if(state.started&&state.received){const landscapeSign=state.orientation===270||state.orientation===-90?-1:1;
+const leftRight=wrap(state.rawBeta-state.zeroBeta)*landscapeSign*(config.invertSteer?-1:1);const frontBack=wrap(state.rawGamma-state.zeroGamma)*landscapeSign*(config.invertThrottle?-1:1);
+let targetSteer=inputCurve(leftRight,config.steerSensitivity),targetThrottle=inputCurve(frontBack,config.throttleSensitivity);
+state.steer=smooth(state.steer,targetSteer,dt,8);state.throttle=smooth(state.throttle,targetThrottle,dt,7);
+state.elapsed+=dt;if(state.elapsed>=3)state.green=true;
+if(state.green){const desired=clamp(45+state.throttle*85,0,140);state.speed=smooth(state.speed,desired,dt,state.throttle<0?1.7:.55);state.lane=clamp(state.lane+state.steer*(.25+state.speed/110)*dt*1.5,-2.65,2.65);state.roadOffset=(state.roadOffset+state.speed*dt/450)%1;}else state.speed=0;
+state.lean=smooth(state.lean,state.steer*33,dt,7);
+$('lr').textContent='좌우 '+leftRight.toFixed(1)+'°';$('fb').textContent='앞뒤 '+frontBack.toFixed(1)+'°';$('raw').textContent='β '+state.rawBeta.toFixed(1)+'° · γ '+state.rawGamma.toFixed(1)+'° · 화면 '+state.orientation+'°';$('mode').textContent=!state.green?'신호 대기':state.throttle>.12?'가속':state.throttle<-.12?'감속':Math.abs(state.steer)>.1?'차선 이동':'속도 유지';}else if(state.started){$('mode').textContent='센서 수신 대기'}$('speed').textContent=Math.round(state.speed);draw();requestAnimationFrame(frame)}requestAnimationFrame(frame);
+if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
