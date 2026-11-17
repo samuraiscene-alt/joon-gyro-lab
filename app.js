@@ -8,6 +8,8 @@ function updateLabels(){$('steerLabel').textContent=config.steerSensitivity.toFi
 $('settings').onclick=()=>$('config').showModal();
 const state={started:false,received:false,rawBeta:0,rawGamma:0,zeroBeta:0,zeroGamma:0,steer:0,throttle:0,lane:0,lean:0,speed:0,elapsed:0,green:false,clock:0,roadOffset:0,frame:0,orientation:90,forwardFiltered:0,steerFiltered:0,launchSpeed:0,lastOrientation:90};
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+/* Acceleration has its own curve: steering should remain gentle. */
+function throttleCurve(degrees){const d=4;const m=Math.abs(degrees);if(m<=d)return 0;const t=clamp((m-d)/20,0,1);const response=t*t*(3-2*t);return Math.sign(degrees)*response*clamp(config.throttleSensitivity/0.6,0.33,2.5)}
 const wrap=v=>((v+180)%360+360)%360-180;
 const smooth=(a,b,dt,rate)=>a+(b-a)*(1-Math.exp(-dt*rate));
 function angle(){let a=screen.orientation?.angle;if(typeof a!=='number')a=typeof window.orientation==='number'?window.orientation:90;return a}
@@ -35,17 +37,17 @@ const landscapeSign=state.orientation===270||state.orientation===-90?1:-1;
 const rawLR=wrap(state.rawBeta-state.zeroBeta)*landscapeSign*(config.invertSteer?-1:1);const rawFB=wrap(state.rawGamma-state.zeroGamma)*landscapeSign*(config.invertThrottle?-1:1);
 state.steerFiltered=smooth(state.steerFiltered,rawLR,dt,5);state.forwardFiltered=smooth(state.forwardFiltered,rawFB,dt,4.5);
 const leftRight=state.steerFiltered,frontBack=state.forwardFiltered;
-let targetSteer=inputCurve(leftRight,config.steerSensitivity),targetThrottle=inputCurve(frontBack,config.throttleSensitivity);
-state.steer=smooth(state.steer,targetSteer,dt,3.8);state.throttle=smooth(state.throttle,targetThrottle,dt,3.4);
+let targetSteer=inputCurve(leftRight,config.steerSensitivity),targetThrottle=clamp(throttleCurve(frontBack),-1,1);
+state.steer=smooth(state.steer,targetSteer,dt,3.8);state.throttle=smooth(state.throttle,targetThrottle,dt,4.5);
 state.elapsed+=dt;if(state.elapsed>=3)state.green=true;
 if(state.green){
 /* Signal launches the bike automatically to cruising speed. Neutral then preserves speed. */
 if(state.elapsed<5){state.launchSpeed=Math.min(42,state.launchSpeed+24*dt);state.speed=Math.max(state.speed,state.launchSpeed);}
-const power=state.throttle>=0?state.throttle*32:state.throttle*48;
-state.speed=clamp(state.speed+power*dt,0,140);
+const power=state.throttle>=0?state.throttle*85:state.throttle*110;
+state.speed=clamp(state.speed+power*dt,0,200);
 state.lane=clamp(state.lane+state.steer*(.12+state.speed/180)*dt*.75,-1.8,1.8);
-state.roadOffset=(state.roadOffset+state.speed*dt/450)%1;
+state.roadOffset=(state.roadOffset+state.speed*dt/210)%1;
 }else state.speed=0;
 state.lean=smooth(state.lean,state.steer*25,dt,4.5);
-$('lr').textContent=(Math.abs(leftRight)<config.deadZone?'직진':leftRight>0?'우회전':'좌회전')+' · 좌우 '+leftRight.toFixed(1)+'°';$('fb').textContent='앞뒤 '+frontBack.toFixed(1)+'°';$('raw').textContent='β '+state.rawBeta.toFixed(1)+'° · γ '+state.rawGamma.toFixed(1)+'° · 화면 '+state.orientation+'°';$('mode').textContent=!state.green?'신호 대기':state.throttle>.12?'가속':state.throttle<-.12?'감속':Math.abs(state.steer)>.1?'차선 이동':'속도 유지';}else if(state.started){$('mode').textContent='센서 수신 대기'}$('speed').textContent=Math.round(state.speed);draw();requestAnimationFrame(frame)}requestAnimationFrame(frame);
+$('lr').textContent=(Math.abs(leftRight)<config.deadZone?'직진':leftRight>0?'우회전':'좌회전')+' · 좌우 '+leftRight.toFixed(1)+'°';$('fb').textContent='앞뒤 '+frontBack.toFixed(1)+'° · 출력 '+Math.round(state.throttle*100)+'%';$('raw').textContent='β '+state.rawBeta.toFixed(1)+'° · γ '+state.rawGamma.toFixed(1)+'° · 화면 '+state.orientation+'°';$('mode').textContent=!state.green?'신호 대기':state.throttle>.12?'가속':state.throttle<-.12?'감속':Math.abs(state.steer)>.1?'차선 이동':'속도 유지';}else if(state.started){$('mode').textContent='센서 수신 대기'}$('speed').textContent=Math.round(state.speed);draw();requestAnimationFrame(frame)}requestAnimationFrame(frame);
 if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').then(r=>r.update()).catch(()=>{}));
