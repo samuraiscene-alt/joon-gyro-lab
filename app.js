@@ -39,8 +39,7 @@ state.steer=smooth(state.steer,targetSteer,dt,3.8);state.throttle=smooth(state.t
 state.elapsed+=dt;if(state.elapsed>=3)state.green=true;
 if(state.green){
 /* Signal launches the bike automatically to cruising speed. Neutral then preserves speed. */
-state.launchSpeed=Math.min(42,state.launchSpeed+24*dt);
-state.speed=Math.max(state.speed,state.launchSpeed);
+if(state.elapsed<5){state.launchSpeed=Math.min(42,state.launchSpeed+24*dt);state.speed=Math.max(state.speed,state.launchSpeed);}
 const power=state.throttle>=0?state.throttle*32:state.throttle*48;
 state.speed=clamp(state.speed+power*dt,0,140);
 state.lane=clamp(state.lane+state.steer*(.12+state.speed/180)*dt*.75,-1.8,1.8);
